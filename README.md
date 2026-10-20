@@ -1,18 +1,10 @@
-# FieldQuote AI
+# FieldQuote AI — Technical reference
 
-A mobile-first HVAC estimating tool built for the [Field Estimate Tool assignment](docs/ASSIGNMENT.md). It brings the supplied equipment, labor and customer records into one workflow: **select property → inspect → review recommendations or choose items manually → review an itemized estimate**.
+FieldQuote AI is a mobile-first HVAC estimating application that helps technicians document inspections, select equipment and labor, and prepare itemized estimates. It supports AI-assisted recommendations with technician approval, while keeping pricing calculations based on the supplied catalog data.
 
-## What I built
+Assessment write-up: [docs/SOLUTION.md](docs/SOLUTION.md). Original assignment: [docs/ASSIGNMENT.md](docs/ASSIGNMENT.md).
 
-- Searchable customer/property records, including a form for new customers saved on the current device.
-- Searchable equipment and labor, editable units/hours, immediate totals and local draft restoration.
-- A short inspection with symptom shortcuts and validated server-side AI recommendations. Suggestions show a reason and require explicit approval; manual estimating remains available.
-- A mobile estimate drawer, tablet side editor, and customer-facing review with equipment/labor subtotals, editable branding, generated editable scope, assumptions, exclusions and browser print/save.
-- Plain-language notices for inconsistent source fields rather than silently assuming clean data.
-
-**Pricing is deliberately conservative:** equipment uses supplied base costs; labor uses listed hourly charges. The interface calls the combined amount **Estimated subtotal** and shows **Final customer price: not set**. Tax, markup, adjustments and selling-price policy require business verification. No equipment compatibility, sizing, diagnosis or completed work is implied.
-
-## Run locally
+## Requirements and local setup
 
 Requires **Node.js 22+** and npm. From this directory:
 
@@ -21,58 +13,113 @@ npm ci
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. This runs Vite and a Node API server; `/api` is proxied to port 3001. For the built app:
+Open **http://127.0.0.1:5173**. Vite serves the frontend and proxies `/api` to the Node server on port 3001.
+
+To serve the built application:
 
 ```sh
 npm run build
 npm start
 ```
 
-Open **http://127.0.0.1:3001**. Stop an existing backend before starting another on the same port. Nothing is publicly deployed by these commands.
+Open **http://127.0.0.1:3001**. Stop an existing backend before starting another on the same port. The backend binds to `127.0.0.1`.
 
-## AI: demo and live
+## Stack and architecture
 
-Without configuration the backend uses **deterministic Demo Mode**, with no provider call. The explicit **Try demo recommendations · no model call** button always forces demo, even on a live-configured server. It selects a provisional labor entry matching the job category at estimated minimum hours and explains its limitations; it does not simulate a diagnosis or select equipment. See the [end-to-end demo walkthrough](docs/DEMO.md).
+- React 19, strict TypeScript, Vite and plain CSS.
+- Node.js HTTP server executed with `tsx`; no Express or application framework.
+- Zod runtime validation shared between client and server.
+- JSON source data and browser localStorage; no database or authentication.
 
-For live AI, copy `.env.example` to ignored `.env` and set a personal `AI_API_KEY`, `AI_MODE=live`, and an OpenAI-compatible `AI_MODEL`/HTTPS `AI_BASE_URL`. The example uses `gpt-4.1-mini`. Normal npm scripts **do not automatically load `.env`**. Start the backend and frontend separately:
+| Module | Responsibility |
+|---|---|
+| `src/domain.ts` | Data normalization, catalog IDs/display names, quantity validation, integer-cent calculations and inspection/recommendation schemas |
+| `src/App.tsx` | Workflow state, selection, recommendation approval, editable items and draft persistence |
+| `src/recommendations.ts` | Client request, response validation and safe error handling |
+| `src/workflow.ts` | Symptom selection and deterministic proposed-scope generation |
+| `src/draft.ts` / `src/localCustomers.ts` | Persisted-draft and local-customer validation |
+| `src/AddCustomer.tsx` | New customer/property form |
+| `src/EstimateDrawer.tsx` | Native modal estimate drawer and focus management |
+| `src/CustomerEstimate.tsx` | Itemized review, presentation fields, scope and browser printing |
+| `src/styles.css` | Responsive layout, focus styling and print rules |
+| `server/index.ts` | API routes, input limits, errors and built-file serving |
+| `server/ai.ts` | Provider adapter and deterministic demo |
+
+Data flow: source JSON → normalized catalog → inspection → validated recommendations → technician approval → selected item IDs/quantities → deterministic subtotal → customer review. Manual selection enters the same calculation path. Normal estimate calculations run in the browser; there is no authoritative saved-quote backend endpoint.
+
+## Server configuration
+
+`.env.example` contains the configuration template. Copy it to ignored `.env` for local secrets. Normal npm scripts **do not automatically load `.env`**.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AI_MODE` | Demo when not `live` | Set `live` to enable provider requests on the normal endpoint |
+| `AI_API_KEY` | None | Server-side provider credential required for live mode |
+| `AI_BASE_URL` | `https://api.openai.com/v1` | HTTPS OpenAI-compatible API base URL |
+| `AI_MODEL` | `gpt-4.1-mini` | Provider model identifier |
+| `PORT` | `3001` | Backend listening port; Vite proxy also requires adjustment if changed |
+
+To explicitly load `.env`:
 
 ```sh
-# Terminal 1: explicitly load server configuration
+# Terminal 1: backend
 node --env-file=.env --import tsx server/index.ts
-# Terminal 2: frontend development server
+# Terminal 2: development frontend
 npx vite --host 127.0.0.1
 ```
 
-For the built website, only the backend command is needed after `npm run build`. Live generation incurs provider charges. Never put keys in `VITE_*`, screenshots, chat or Git. Only bounded inspection facts and catalog IDs/names/model descriptions go to the provider; customer identity/contact records and prices are excluded. Free text still contains what the technician types, so omit personal information.
+For the built website, only the backend command is needed after `npm run build`. Live generation incurs provider charges. Keep credentials out of `VITE_*`, browser code and Git.
 
-Requests use JSON mode plus strict application-side validation of catalog IDs, quantities, duplicate entries and allowed fields. Invalid output is rejected as a whole; authoritative prices always come from the catalog. Provider requests time out after 15 seconds, the client after 20 seconds. Failures leave manual selection available. JSON mode and schema validation serve different purposes, as described in the [official OpenAI documentation](https://developers.openai.com/api/docs/guides/structured-outputs).
+## API and recommendation contract
 
-## Why these choices
+| Route | Behavior |
+|---|---|
+| `POST /api/recommend` | Uses configured demo/live mode |
+| `POST /api/recommend/demo` | Forces deterministic demo; no provider call |
 
-React + strict TypeScript, plain CSS, Zod and a small Node HTTP server keep the solution inspectable without a database or framework overhead. Data normalization and deterministic pricing are independent of React and the model. Native modal dialog behavior supports the estimate drawer without another UI dependency.
+Both accept the strict inspection schema from `src/domain.ts`. Incoming bodies are limited to 12KB. Provider requests time out after 15 seconds and client requests after 20 seconds. Errors are sanitized; manual selection remains available after failures.
 
-The supplied data has **30 equipment items, 11 hourly labor records and 10 customer/property records**. Alternate `base_cost`, `property_type` and `sqft` fields are normalized; missing property details remain unknown. Labor has no source IDs, so stable `jobType:level` IDs are synthesized and paired with readable service names. Original JSON is unchanged.
+Live requests send inspection facts and catalog IDs/names/types/descriptions, excluding customer identity/contact records and prices. Free-text fields still contain whatever the technician enters.
 
-Prices convert to integer cents, labor quantities to integer hundredths, and each line rounds half-up to the nearest cent before summing. Equipment accepts 1–100 whole units; labor accepts 0.01–100 hours. Estimated hour ranges are guidance, not billing minimums. Repeated addition opens the existing item for editing rather than duplicating it.
+Responses contain `mode`, `recommendations`, `missingInformation` and `assumptions`. Recommendations are limited to 12 existing catalog IDs, valid quantities, bounded reasons and `requiresVerification: true`. Duplicate IDs, unknown IDs and unexpected fields reject the response. JSON mode is followed by application-side schema validation. Suggestions affect estimates only after explicit selection.
 
-## Validation and limits
+Demo mode chooses the first labor record matching the requested job at estimated minimum hours. It does not diagnose faults, verify service level or select equipment. The explicit demo endpoint works independently of normal live configuration but requires a running backend.
+
+## Source data and pricing
+
+The unchanged `data/` files contain **30 equipment items, 11 hourly labor records and 10 customer/property records**.
+
+- Equipment `baseCost`/`base_cost` and customer `propertyType`/`property_type`, `squareFootage`/`sqft` are normalized.
+- Missing property details remain unknown. Invalid/duplicate records produce notices.
+- Labor IDs are synthesized as `jobType:level`; readable display names are separate from IDs.
+- Equipment accepts 1–100 whole units; labor accepts 0.01–100 hours in hundredths.
+- Rates convert to integer cents; quantities to integer hundredths. Each line rounds half-up to cents before summing.
+- Equipment uses source base costs and labor uses listed hourly charges. Estimated hour ranges are guidance, not billing minimums.
+
+**Estimated subtotal** combines those amounts. **Final customer price: not set** indicates that tax, markup, adjustments and selling-price policy require verification. No additional charges are inferred.
+
+## Persistence and presentation
+
+One draft, presentation settings and up to 100 added customer/property records are stored unencrypted in localStorage. Data is not synchronized or backed up. Clearing a draft retains added customers; remove them separately under Property on shared devices. Invalid/incompatible saved data is discarded.
+
+The mobile **View** action opens the estimate drawer; **Added ✓** opens its selected item. Desktop/tablet use the side editor. Scope generation is deterministic from selected items, editable and preserved after item changes; explicit regeneration confirms before replacing text. Output uses browser print/save rather than a PDF-generation service.
+
+## Validation
 
 ```sh
 npm run typecheck
 npm test
 npm run build
-# With a built server running; this calls only the no-charge demo endpoint:
+# With a built server running; uses only the no-charge demo route:
 node tests/http-smoke.mjs
 ```
 
-Latest full suite: **24 passing tests**, covering pricing/rounding, normalization, invalid quantities, local customer/draft validation, scope generation, catalog matching, demo contracts and simulated provider/client failures. Build, typecheck, formatting and HTTP smoke results are recorded in [TEST_RESULTS.md](docs/dev-log/TEST_RESULTS.md). One previously authorized real OpenAI request passed schema/catalog validation; that is not a full live browser journey or broad model-quality evaluation.
+`SMOKE_BASE_URL` optionally changes the smoke-test server URL. The last recorded full suite passed **24 tests**, covering normalization, pricing/rounding, quantities, drafts/customers, scope, catalog matching and simulated AI failures. `tests/live-smoke.ts` is a separate, explicitly authorized paid test and is excluded from `npm test`.
 
-The developer has exercised the product and reported it working as envisioned. Automated browser tooling was unavailable: exact viewport, keyboard/drawer focus, screen-reader, soft-keyboard and print-pagination checks remain **NOT VERIFIED** by the agent. Use [the final handoff checklist](docs/dev-log/FINAL_HANDOFF.md) before submission. No measured estimate-time savings are claimed.
+One previously authorized real provider request passed schema/catalog validation. This does not establish broad model accuracy or a full live browser journey. Automated viewport, drawer/keyboard, screen-reader, soft-keyboard and print-pagination checks remain unverified. See [test results](docs/dev-log/TEST_RESULTS.md), the [demo/QA procedure](docs/DEMO.md) and the [current handoff](docs/dev-log/FINAL_HANDOFF.md).
 
-Drafts and up to 100 added customer/property records live unencrypted in browser localStorage; no sync, office sharing or backup. Clearing an estimate retains added customer records; remove them separately under Property on shared devices. Corrupted/incompatible storage is discarded. Pending recommendation reasons are not durably audited. Generated scope is a proposal and must be reconciled after item changes.
+## Current limitations
 
-## What I would change with more time
+No authentication, centralized database, multiple saved estimates, CRM/office sync, inventory/compatibility certification, autonomous diagnosis/sizing, formal approval workflow or dedicated PDF generation. Native dialog requires a modern browser. There is no durable AI approval-history record, draft migration, multi-tab conflict handling, provider rate/cost control or public-deployment hardening.
 
-Prioritize real-device/keyboard/print QA, confirmed customer pricing policy, and technician-reviewed AI evaluation. Then add durable multi-estimate storage, record editing, draft migration/backup, compatibility metadata and smaller workflow components. Public use would also require authentication, rate/cost limits, origin controls and deployment hardening. Authentication, CRM sync, inventory validation, formal approvals, autonomous diagnosis/sizing and a dedicated PDF generator are outside this assessment implementation.
-
-Start code review with `src/domain.ts`, `server/ai.ts`, then `src/App.tsx`. The [final handoff](docs/dev-log/FINAL_HANDOFF.md) provides a file-by-file guide; [SESSION_LOG.md](docs/dev-log/SESSION_LOG.md) preserves the chronological development audit. No commits, pushes, PRs, public deployments or submission have been performed by the agent; the developer owns those decisions.
+Development history, decisions and unresolved issues are recorded in [docs/dev-log/](docs/dev-log/SESSION_LOG.md).
