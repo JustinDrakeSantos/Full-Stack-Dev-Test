@@ -3,13 +3,18 @@ node_modules/
 venv/
 __pycache__/
 *.pyc
+
+# Environment variables and secrets
 .env
+.env.*
+!.env.example
 
 # Build output
 dist/
 build/
 .next/
 out/
+coverage/
 
 # IDE
 .vscode/
@@ -24,3 +29,9 @@ Thumbs.db
 # Logs
 *.log
 npm-debug.log*
+
+# Local AI development instructions
+AGENTS.md
+
+# Internal development logs
+docs/dev-log/
